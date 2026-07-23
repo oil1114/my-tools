@@ -1,0 +1,21 @@
+name: Diag
+on:
+  workflow_dispatch: {}
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安裝 Playwright 瀏覽器
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: 診斷 D2 時段
+        env:
+          FE_ACCOUNT: ${{ secrets.FE_ACCOUNT }}
+          FE_PASSWORD: ${{ secrets.FE_PASSWORD }}
+        run: python diag.py
