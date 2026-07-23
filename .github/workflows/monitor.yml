@@ -23,7 +23,11 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+      # 一定要抓「最新」的 main（含最新 state.json 基準），而不是派工當下被釘住的舊版，
+      # 否則排隊 6 分鐘後才跑的這棒會拿到過期基準 → 重複通知同一個場地。
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
 
       # 一開始就排下一棒；放最前面，就算後面步驟失敗，接力也不會斷。
       - name: 排下一棒
