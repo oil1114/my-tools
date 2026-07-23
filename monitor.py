@@ -13,6 +13,7 @@ import re
 import sys
 import json
 import datetime
+import html
 import urllib.parse
 import urllib.request
 
@@ -181,8 +182,14 @@ def save_state(keys):
 
 def push(msg):
     # 透過 Telegram Bot 送訊息，只會進到你自己的聊天室
+    # 用 HTML 模式，讓長網址藏在可點的短文字後面
     data = urllib.parse.urlencode(
-        {"chat_id": TG_CHAT_ID, "text": msg, "disable_web_page_preview": "true"}
+        {
+            "chat_id": TG_CHAT_ID,
+            "text": msg,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": "true",
+        }
     ).encode("utf-8")
     url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
     req = urllib.request.Request(url, data=data)
@@ -206,15 +213,17 @@ def format_message(new_slots):
         if len(items) > 8:
             times = sorted({i["time"] for i in items if i["time"]})
             span = f"{times[0].split('~')[0]}～{times[-1].split('~')[1]}" if times else ""
-            lines.append(f"{head} 新開放 {len(items)} 個場地 {span}")
+            lines.append(html.escape(f"{head} 新開放 {len(items)} 個場地 {span}"))
         else:
             for i in sorted(items, key=lambda x: (x["time"], x["court"])):
-                lines.append(f"{head} {i['time']} {i['court']}")
-        # 直達連結：依這天新釋出的時段，附上直接開啟那一頁的網址
+                lines.append(html.escape(f"{head} {i['time']} {i['court']}"))
+        # 直達連結：把長網址藏在可點的短文字後面（Telegram HTML <a>）
         sessions = sorted({session_of(int(i["time"][:2])) for i in items if i["time"]})
         for d2 in sessions or [3]:
-            lines.append(f"👉 開啟 {int(mo)}/{int(da)} {SESSION_NAME[d2]}：{slot_url(d, d2)}")
-    return "有新場地釋出！\n" + "\n".join(lines)
+            url = html.escape(slot_url(d, d2), quote=True)
+            label = html.escape(f"開啟 {int(mo)}/{int(da)} {SESSION_NAME[d2]}")
+            lines.append(f'👉 <a href="{url}">{label}</a>')
+    return html.escape("有新場地釋出！") + "\n" + "\n".join(lines)
 
 
 def main():
