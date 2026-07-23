@@ -2,11 +2,14 @@ name: Monitor
 
 on:
   schedule:
-    # 刻意用「非整數、不等間隔」的時間點，避免固定規律被偵測。
-    # 再加上執行步驟裡的隨機延遲，實際查詢時間點是打散的。
-    # （GitHub 排程本身在尖峰時也常延遲數分鐘，屬正常現象）
-    - cron: "4,21,33,48 * * * *"
-  workflow_dispatch: {}   # 也可以在 Actions 頁面手動按一下執行
+    # 注意：GitHub 的 cron 一律用 UTC。台灣是 UTC+8，所以：
+    #   台灣 00:42 = UTC 16:42　→　每天重設基準（不通知）
+    #   台灣 01:00~23:59 = UTC 17-23 與 0-15 時　→　監控並通知
+    # 台灣 00:00~00:42（開放搶＋未付款釋出）刻意不跑，由你自己現場搶。
+    # 時點刻意用非整數、不等間隔，加上執行時隨機延遲，避免固定規律被偵測。
+    - cron: "42 16 * * *"
+    - cron: "4,21,33,48 17-23,0-15 * * *"
+  workflow_dispatch: {}   # 也可以在 Actions 頁面手動按一下執行（手動＝監控模式，不會重設）
 
 permissions:
   contents: write          # 讓工作流程可以把 state.json 存回 repo
@@ -32,10 +35,13 @@ jobs:
 
       - name: 執行監控
         env:
+          TZ: Asia/Taipei          # 讓程式的日期/時段計算用台灣時間
           FE_ACCOUNT: ${{ secrets.FE_ACCOUNT }}
           FE_PASSWORD: ${{ secrets.FE_PASSWORD }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          # 只有 00:42(台灣) 那個排程會設 RESET_BASELINE=1：重設基準、不通知
+          RESET_BASELINE: ${{ github.event.schedule == '42 16 * * *' && '1' || '' }}
           # 以下為選填（在 Settings > Variables 設定，可留空）
           WATCH_DOWS: ${{ vars.WATCH_DOWS }}
           WATCH_START_HOUR: ${{ vars.WATCH_START_HOUR }}

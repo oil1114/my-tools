@@ -33,6 +33,10 @@ PASSWORD = os.environ.get("FE_PASSWORD", "")
 TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "")
 TG_CHAT_ID = os.environ.get("TG_CHAT_ID", "")
 
+# 每天固定時間（00:42）由排程設 RESET_BASELINE=1：只重建基準、不推播，
+# 把「00:00 開放 + 00:40 未付款釋出」後的狀態當成當天的起點。
+RESET_BASELINE = bool(os.environ.get("RESET_BASELINE", "").strip())
+
 # 只想盯特定星期？填數字，用逗號分隔（週一=1 ... 週日=7），留空=全部
 # 例如只要週六日： WATCH_DOWS = "6,7"
 WATCH_DOWS = os.environ.get("WATCH_DOWS", "").strip()
@@ -194,6 +198,10 @@ def main():
 
     prev = load_prev()
     save_state(cur_keys)
+
+    if RESET_BASELINE:
+        print(f"每日重設基準（目前可預約 {len(cur_keys)} 個），不推播。")
+        return
 
     if prev is None:
         print(f"首次執行，建立基準（目前可預約 {len(cur_keys)} 個），不推播。")
