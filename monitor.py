@@ -37,8 +37,8 @@ TG_CHAT_ID = os.environ.get("TG_CHAT_ID", "")
 # 例如只要週六日： WATCH_DOWS = "6,7"
 WATCH_DOWS = os.environ.get("WATCH_DOWS", "").strip()
 # 只想盯特定時段？（24 小時制，含起、不含迄）留預設=全部
-WATCH_START_HOUR = int(os.environ.get("WATCH_START_HOUR", "0"))
-WATCH_END_HOUR = int(os.environ.get("WATCH_END_HOUR", "24"))
+WATCH_START_HOUR = int(os.environ.get("WATCH_START_HOUR") or "0")
+WATCH_END_HOUR = int(os.environ.get("WATCH_END_HOUR") or "24")
 
 STATE_FILE = "state.json"
 
