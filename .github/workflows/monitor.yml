@@ -8,7 +8,7 @@ on:
     # 台灣 00:00~00:42（開放搶＋未付款釋出）刻意不跑，由你自己現場搶。
     # 時點刻意用非整數、不等間隔，加上執行時隨機延遲，避免固定規律被偵測。
     - cron: "42 16 * * *"
-    - cron: "3,14,25,36,47,56 17-23,0-15 * * *"
+    - cron: "2,8,15,21,28,34,41,47,53 17-23,0-15 * * *"
   workflow_dispatch:      # 也可以在 Actions 頁面手動執行
     inputs:
       reset_baseline:
@@ -55,7 +55,7 @@ jobs:
           # 只有「排程」執行才隨機延遲 0～8 分鐘，讓實際查詢時間點不規律；
           # 手動觸發（測試用）不延遲，馬上跑。
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            sleep $((RANDOM % 300))
+            sleep $((RANDOM % 120))
           fi
           python monitor.py
 
