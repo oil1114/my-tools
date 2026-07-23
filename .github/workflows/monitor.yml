@@ -59,11 +59,12 @@ jobs:
       - name: 保存狀態
         if: always()
         run: |
-          if [ -n "$(git status --porcelain state.json reset_date.txt)" ]; then
+          if [ -n "$(git status --porcelain state.json reset_date.txt alert_date.txt)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add state.json
-            [ -f reset_date.txt ] && git add reset_date.txt
+            for f in state.json reset_date.txt alert_date.txt; do
+              [ -f "$f" ] && git add "$f"
+            done
             git commit -m "update state [skip ci]"
             git pull --rebase --autostash origin ${{ github.ref_name }} || true
             git push

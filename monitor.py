@@ -66,6 +66,11 @@ WATCH_END_HOUR = int(os.environ.get("WATCH_END_HOUR") or "24")
 
 STATE_FILE = "state.json"
 RESET_FILE = "reset_date.txt"  # 「今天已重設」的燈號：存最後一次重設的台灣日期
+ALERT_FILE = "alert_date.txt"  # 「今天已警報過」燈號：登入失敗通知每天最多一次，避免洗版
+
+
+class LoginError(Exception):
+    """登入失敗（帳密錯/被鎖），跟一般連線逾時分開處理。"""
 
 if not (ACCOUNT and PASSWORD and TG_BOT_TOKEN and TG_CHAT_ID):
     sys.exit("缺少設定：請確認 FE_ACCOUNT / FE_PASSWORD / TG_BOT_TOKEN / TG_CHAT_ID 都已設定。")
@@ -123,7 +128,7 @@ def scrape():
         html = page.content()
         if 'id="loginpw"' in html or 'name="loginpw"' in html:
             browser.close()
-            sys.exit("登入失敗，請檢查 FE_ACCOUNT / FE_PASSWORD 是否正確。")
+            raise LoginError("登入失敗（帳號密碼可能改了或帳號被鎖）。")
 
         # 找出目前開放（可點選）的日期
         open_dates = page.eval_on_selector_all(
@@ -201,6 +206,20 @@ def mark_reset(date_str):
         f.write(date_str)
 
 
+def alerted_today(today):
+    """今天是否已經發過登入失敗警報（避免每 6 分鐘洗版）。"""
+    try:
+        with open(ALERT_FILE, encoding="utf-8") as f:
+            return f.read().strip() == today
+    except FileNotFoundError:
+        return False
+
+
+def mark_alerted(today):
+    with open(ALERT_FILE, "w", encoding="utf-8") as f:
+        f.write(today)
+
+
 def push(msg):
     # 透過 Telegram Bot 送訊息。TG_CHAT_ID 可用逗號分隔多個人，會分別寄給每一位。
     # 用 HTML 模式，讓長網址藏在可點的短文字後面。
@@ -265,7 +284,23 @@ def main():
     daily_reset = last_reset_date() != today
     reset = RESET_BASELINE or daily_reset
 
-    avail = [s for s in scrape() if in_window(s)]
+    try:
+        avail = [s for s in scrape() if in_window(s)]
+    except LoginError as e:
+        # 真的登入不進去（多半是改了密碼）：發一次 Telegram 警報，然後正常結束（不讓這棒算失敗）
+        print("登入失敗：" + str(e))
+        if not alerted_today(today):
+            mark_alerted(today)
+            try:
+                push("⚠️ 場地監控登入失敗，可能是訂場密碼改了或帳號被鎖。請確認並更新設定，否則暫時收不到場地通知。")
+            except Exception:
+                pass
+        return
+    except Exception as e:
+        # 偶發的連線逾時／限流等暫時性錯誤：安靜略過，下一棒再試（不讓這棒算失敗、不寄失敗信）
+        print(f"本次檢查失敗（多半是連線逾時或被限流），略過，下一棒再試：{e!r}")
+        return
+
     cur = {key(s): s for s in avail}
     cur_keys = set(cur)
 
