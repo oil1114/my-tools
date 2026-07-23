@@ -70,9 +70,14 @@ if not (ACCOUNT and PASSWORD and TG_BOT_TOKEN and TG_CHAT_ID):
     sys.exit("缺少設定：請確認 FE_ACCOUNT / FE_PASSWORD / TG_BOT_TOKEN / TG_CHAT_ID 都已設定。")
 
 
+def tw_now():
+    """台灣時間（固定 UTC+8，無日光節約），不依賴系統時區設定。"""
+    return datetime.datetime.utcnow() + datetime.timedelta(hours=8)
+
+
 def target_dates():
     """滾動開放約 8 天：今天到今天+7。跨月也沒問題。"""
-    today = datetime.date.today()
+    today = tw_now().date()
     return [(today + datetime.timedelta(days=i)).strftime("%Y/%m/%d") for i in range(8)]
 
 
@@ -232,6 +237,16 @@ def format_message(new_slots):
 
 
 def main():
+    # 依台灣時間決定這次要做什麼（改用「自我接力」後，排程判斷放在程式裡）
+    now = tw_now()
+    hm = now.hour * 60 + now.minute
+    # 台灣 00:00–00:42：安靜時段（開放搶＋未付款釋出，你自己現場搶），不查不通知
+    if hm < 42:
+        print(f"台灣 {now:%H:%M}：安靜時段（00:00–00:42），本次不查。")
+        return
+    # 台灣 00:42–00:50：當日重設基準；或手動勾選 reset_baseline 時
+    reset = RESET_BASELINE or (42 <= hm < 51)
+
     avail = [s for s in scrape() if in_window(s)]
     cur = {key(s): s for s in avail}
     cur_keys = set(cur)
@@ -239,7 +254,7 @@ def main():
     prev = load_prev()
     save_state(cur_keys)
 
-    if RESET_BASELINE:
+    if reset:
         print(f"每日重設基準（目前可預約 {len(cur_keys)} 個），不推播。")
         return
 

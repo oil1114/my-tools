@@ -1,15 +1,11 @@
 name: Monitor
 
+# 「自我接力」觸發：每一棒執行時，一開始就用 DISPATCH_TOKEN 排下一棒，
+# 靠 concurrency 排隊，等這一棒跑完才會開始下一棒。完全不靠 GitHub 內建排程
+# （它對新 repo 常常不穩、不會自己跑）。
+# 每天要做什麼（安靜時段 / 重設基準 / 正常監控）由 monitor.py 依台灣時間判斷。
 on:
-  schedule:
-    # 注意：GitHub 的 cron 一律用 UTC。台灣是 UTC+8，所以：
-    #   台灣 00:42 = UTC 16:42　→　每天重設基準（不通知）
-    #   台灣 01:00~23:59 = UTC 17-23 與 0-15 時　→　監控並通知
-    # 台灣 00:00~00:42（開放搶＋未付款釋出）刻意不跑，由你自己現場搶。
-    # 時點刻意用非整數、不等間隔，加上執行時隨機延遲，避免固定規律被偵測。
-    - cron: "42 16 * * *"
-    - cron: "2,8,15,21,28,34,41,47,53 17-23,0-15 * * *"
-  workflow_dispatch:      # 也可以在 Actions 頁面手動執行
+  workflow_dispatch:
     inputs:
       reset_baseline:
         description: "重設基準（只重建、不通知）"
@@ -29,6 +25,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 一開始就排下一棒；放最前面，就算後面步驟失敗，接力也不會斷。
+      - name: 排下一棒
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+        run: gh workflow run monitor.yml -R ${{ github.repository }} || true
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -38,6 +40,9 @@ jobs:
           pip install playwright
           python -m playwright install --with-deps chromium
 
+      - name: 節奏控制（把每棒拉長到約 6 分鐘一次）
+        run: sleep 150
+
       - name: 執行監控
         env:
           TZ: Asia/Taipei          # 讓程式的日期/時段計算用台灣時間
@@ -45,19 +50,11 @@ jobs:
           FE_PASSWORD: ${{ secrets.FE_PASSWORD }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          # 00:42(台灣) 排程、或手動勾選 reset_baseline 時，只重建基準、不通知
-          RESET_BASELINE: ${{ (github.event.schedule == '42 16 * * *' || github.event.inputs.reset_baseline == 'true') && '1' || '' }}
-          # 以下為選填（在 Settings > Variables 設定，可留空）
+          RESET_BASELINE: ${{ github.event.inputs.reset_baseline == 'true' && '1' || '' }}
           WATCH_DOWS: ${{ vars.WATCH_DOWS }}
           WATCH_START_HOUR: ${{ vars.WATCH_START_HOUR }}
           WATCH_END_HOUR: ${{ vars.WATCH_END_HOUR }}
-        run: |
-          # 只有「排程」執行才隨機延遲 0～8 分鐘，讓實際查詢時間點不規律；
-          # 手動觸發（測試用）不延遲，馬上跑。
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            sleep $((RANDOM % 120))
-          fi
-          python monitor.py
+        run: python monitor.py
 
       - name: 保存狀態
         if: always()
