@@ -52,6 +52,18 @@ def target_dates():
     return [(today + datetime.timedelta(days=i)).strftime("%Y/%m/%d") for i in range(8)]
 
 
+def goto(page, url, tries=3):
+    """載入頁面；遇到逾時就重試幾次，對付偶發的連線不穩／限流。"""
+    for i in range(tries):
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            return
+        except Exception:
+            if i == tries - 1:
+                raise
+            page.wait_for_timeout(4000)
+
+
 def scrape():
     """登入並回傳所有可預約場地清單 [{date,time,court}, ...]。"""
     from playwright.sync_api import sync_playwright
@@ -59,10 +71,14 @@ def scrape():
     available = []
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        page = browser.new_context(locale="zh-TW").new_page()
+        ua = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        )
+        page = browser.new_context(locale="zh-TW", user_agent=ua).new_page()
 
         # --- 登入 ---
-        page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
+        goto(page, LOGIN_URL)
         page.fill("#ContentPlaceHolder1_loginid", ACCOUNT)
         page.fill("#loginpw", PASSWORD)
         # 登入鈕是背景圖按鈕，headless 下常被判定為不可見；直接觸發它的 onclick
@@ -73,7 +89,7 @@ def scrape():
         page.wait_for_load_state("networkidle", timeout=60000)
 
         # --- 確認登入成功 ---
-        page.goto(CAL_URL, wait_until="domcontentloaded", timeout=60000)
+        goto(page, CAL_URL)
         html = page.content()
         if 'id="loginpw"' in html or 'name="loginpw"' in html:
             browser.close()
@@ -89,7 +105,7 @@ def scrape():
         dates = sorted(set(open_dates) | set(target_dates()))
 
         for d in dates:
-            page.goto(slot_url(d), wait_until="domcontentloaded", timeout=60000)
+            goto(page, slot_url(d))
             # place01.png = 可預約；抓出 confirm 文字裡「場地 時間」
             names = page.eval_on_selector_all(
                 'img[src*="place01"]',
