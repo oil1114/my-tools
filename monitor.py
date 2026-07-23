@@ -181,20 +181,25 @@ def save_state(keys):
 
 
 def push(msg):
-    # 透過 Telegram Bot 送訊息，只會進到你自己的聊天室
-    # 用 HTML 模式，讓長網址藏在可點的短文字後面
-    data = urllib.parse.urlencode(
-        {
-            "chat_id": TG_CHAT_ID,
-            "text": msg,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": "true",
-        }
-    ).encode("utf-8")
+    # 透過 Telegram Bot 送訊息。TG_CHAT_ID 可用逗號分隔多個人，會分別寄給每一位。
+    # 用 HTML 模式，讓長網址藏在可點的短文字後面。
+    chat_ids = [c.strip() for c in TG_CHAT_ID.split(",") if c.strip()]
     url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
-    req = urllib.request.Request(url, data=data)
-    with urllib.request.urlopen(req, timeout=30) as r:
-        r.read()
+    for chat_id in chat_ids:
+        data = urllib.parse.urlencode(
+            {
+                "chat_id": chat_id,
+                "text": msg,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": "true",
+            }
+        ).encode("utf-8")
+        req = urllib.request.Request(url, data=data)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                r.read()
+        except Exception as e:
+            print(f"推播到 {chat_id} 失敗：{e}")
 
 
 DOW_CH = "一二三四五六日"
