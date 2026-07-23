@@ -22,9 +22,20 @@ LOGIN_URL = f"{BASE}/fe02.aspx?module=login_page&files=login"
 CAL_URL = f"{BASE}/fe02.aspx?module=net_booking&files=booking_place&PT={PT}"
 
 
-def slot_url(d):
-    # d 形如 '2026/07/28'
-    return f"{BASE}/fe02.aspx?module=net_booking&files=booking_place&StepFlag=2&PT={PT}&D={d}&D2=1"
+# 一天分三個時段分頁（D2）：1=上午(06-12) 2=下午(12-18) 3=晚上(18-22)
+SESSION_HOURS = {1: (6, 12), 2: (12, 18), 3: (18, 22)}
+
+
+def slot_url(d, d2):
+    # d 形如 '2026/07/28'；d2 為時段（1 上午 / 2 下午 / 3 晚上）
+    return f"{BASE}/fe02.aspx?module=net_booking&files=booking_place&StepFlag=2&PT={PT}&D={d}&D2={d2}"
+
+
+def active_sessions():
+    """只抓和 WATCH 時段有重疊的分頁，省請求；預設全時段=三段全抓。"""
+    out = [d2 for d2, (lo, hi) in SESSION_HOURS.items()
+           if lo < WATCH_END_HOUR and hi > WATCH_START_HOUR]
+    return out or [1, 2, 3]
 
 
 # ---- 設定（從環境變數讀，GitHub Secrets / Variables 提供）----
@@ -108,19 +119,22 @@ def scrape():
         # 與計算出的滾動視窗取聯集，較保險
         dates = sorted(set(open_dates) | set(target_dates()))
 
+        sessions = active_sessions()
         for d in dates:
-            goto(page, slot_url(d))
-            # place01.png = 可預約；抓出 confirm 文字裡「場地 時間」
-            names = page.eval_on_selector_all(
-                'img[src*="place01"]',
-                "els => els.map(e => { const oc=e.getAttribute('onclick')||'';"
-                " const m=oc.match(/「([^」]+)」/); return m?m[1]:null; }).filter(Boolean)",
-            )
-            for name in names:
-                tm = re.search(r"(\d{2}:\d{2}~\d{2}:\d{2})", name)
-                time_s = tm.group(1) if tm else ""
-                court = name.replace(time_s, "").strip()
-                available.append({"date": d, "time": time_s, "court": court})
+            for d2 in sessions:
+                goto(page, slot_url(d, d2))
+                # place01.png = 可預約；抓出 confirm 文字裡「場地 時間」
+                names = page.eval_on_selector_all(
+                    'img[src*="place01"]',
+                    "els => els.map(e => { const oc=e.getAttribute('onclick')||'';"
+                    " const m=oc.match(/「([^」]+)」/); return m?m[1]:null; }).filter(Boolean)",
+                )
+                for name in names:
+                    tm = re.search(r"(\d{2}:\d{2}~\d{2}:\d{2})", name)
+                    time_s = tm.group(1) if tm else ""
+                    court = name.replace(time_s, "").strip()
+                    available.append({"date": d, "time": time_s, "court": court})
+                page.wait_for_timeout(500)  # 稍微放慢，別對網站太密集
 
         browser.close()
     return available
