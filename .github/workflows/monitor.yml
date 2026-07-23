@@ -1,0 +1,52 @@
+name: Monitor
+
+on:
+  schedule:
+    # 每 10 分鐘檢查一次（GitHub 排程在尖峰時可能會延遲，實際間隔可能較長，屬正常現象）
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}   # 也可以在 Actions 頁面手動按一下執行
+
+permissions:
+  contents: write          # 讓工作流程可以把 state.json 存回 repo
+
+concurrency:
+  group: monitor
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安裝 Playwright 瀏覽器
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+      - name: 執行監控
+        env:
+          FE_ACCOUNT: ${{ secrets.FE_ACCOUNT }}
+          FE_PASSWORD: ${{ secrets.FE_PASSWORD }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          # 以下為選填（在 Settings > Variables 設定，可留空）
+          WATCH_DOWS: ${{ vars.WATCH_DOWS }}
+          WATCH_START_HOUR: ${{ vars.WATCH_START_HOUR }}
+          WATCH_END_HOUR: ${{ vars.WATCH_END_HOUR }}
+        run: python monitor.py
+
+      - name: 保存狀態
+        if: always()
+        run: |
+          if [ -n "$(git status --porcelain state.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add state.json
+            git commit -m "update state [skip ci]"
+            git pull --rebase --autostash origin ${{ github.ref_name }} || true
+            git push
+          fi
