@@ -65,6 +65,7 @@ WATCH_START_HOUR = int(os.environ.get("WATCH_START_HOUR") or "0")
 WATCH_END_HOUR = int(os.environ.get("WATCH_END_HOUR") or "24")
 
 STATE_FILE = "state.json"
+RESET_FILE = "reset_date.txt"  # 「今天已重設」的燈號：存最後一次重設的台灣日期
 
 if not (ACCOUNT and PASSWORD and TG_BOT_TOKEN and TG_CHAT_ID):
     sys.exit("缺少設定：請確認 FE_ACCOUNT / FE_PASSWORD / TG_BOT_TOKEN / TG_CHAT_ID 都已設定。")
@@ -185,6 +186,21 @@ def save_state(keys):
         json.dump(sorted(keys), f, ensure_ascii=False, indent=0)
 
 
+def last_reset_date():
+    """讀「今天已重設」燈號檔，回傳最後重設的日期字串（沒有就回空字串）。"""
+    try:
+        with open(RESET_FILE, encoding="utf-8") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+
+
+def mark_reset(date_str):
+    """點亮燈號：把今天日期寫進燈號檔。"""
+    with open(RESET_FILE, "w", encoding="utf-8") as f:
+        f.write(date_str)
+
+
 def push(msg):
     # 透過 Telegram Bot 送訊息。TG_CHAT_ID 可用逗號分隔多個人，會分別寄給每一位。
     # 用 HTML 模式，讓長網址藏在可點的短文字後面。
@@ -244,8 +260,10 @@ def main():
     if hm < 42:
         print(f"台灣 {now:%H:%M}：安靜時段（00:00–00:42），本次不查。")
         return
-    # 台灣 00:42–00:50：當日重設基準；或手動勾選 reset_baseline 時
-    reset = RESET_BASELINE or (42 <= hm < 51)
+    # 燈號：今天（00:42 後）還沒重設過 → 這棒就是當天第一棒 → 重設
+    today = now.strftime("%Y/%m/%d")
+    daily_reset = last_reset_date() != today
+    reset = RESET_BASELINE or daily_reset
 
     avail = [s for s in scrape() if in_window(s)]
     cur = {key(s): s for s in avail}
@@ -255,6 +273,8 @@ def main():
     save_state(cur_keys)
 
     if reset:
+        if daily_reset:
+            mark_reset(today)  # 點亮燈號：今天已重設
         print(f"每日重設基準（目前可預約 {len(cur_keys)} 個），不推播。")
         return
 
