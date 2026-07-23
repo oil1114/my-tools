@@ -24,6 +24,14 @@ CAL_URL = f"{BASE}/fe02.aspx?module=net_booking&files=booking_place&PT={PT}"
 
 # 一天分三個時段分頁（D2）：1=上午(06-12) 2=下午(12-18) 3=晚上(18-22)
 SESSION_HOURS = {1: (6, 12), 2: (12, 18), 3: (18, 22)}
+SESSION_NAME = {1: "上午", 2: "下午", 3: "晚上"}
+
+
+def session_of(hour):
+    for d2, (lo, hi) in SESSION_HOURS.items():
+        if lo <= hour < hi:
+            return d2
+    return 1
 
 
 def slot_url(d, d2):
@@ -202,7 +210,11 @@ def format_message(new_slots):
         else:
             for i in sorted(items, key=lambda x: (x["time"], x["court"])):
                 lines.append(f"{head} {i['time']} {i['court']}")
-    return "有新場地釋出！\n" + "\n".join(lines) + "\n\n訂場：https://fe.xuanen.com.tw/fe02.aspx"
+        # 直達連結：依這天新釋出的時段，附上直接開啟那一頁的網址
+        sessions = sorted({session_of(int(i["time"][:2])) for i in items if i["time"]})
+        for d2 in sessions or [3]:
+            lines.append(f"👉 開啟 {int(mo)}/{int(da)} {SESSION_NAME[d2]}：{slot_url(d, d2)}")
+    return "有新場地釋出！\n" + "\n".join(lines)
 
 
 def main():
