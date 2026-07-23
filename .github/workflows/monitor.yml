@@ -2,8 +2,10 @@ name: Monitor
 
 on:
   schedule:
-    # 每 10 分鐘檢查一次（GitHub 排程在尖峰時可能會延遲，實際間隔可能較長，屬正常現象）
-    - cron: "*/10 * * * *"
+    # 刻意用「非整數、不等間隔」的時間點，避免固定規律被偵測。
+    # 再加上執行步驟裡的隨機延遲，實際查詢時間點是打散的。
+    # （GitHub 排程本身在尖峰時也常延遲數分鐘，屬正常現象）
+    - cron: "4,21,33,48 * * * *"
   workflow_dispatch: {}   # 也可以在 Actions 頁面手動按一下執行
 
 permissions:
@@ -38,7 +40,13 @@ jobs:
           WATCH_DOWS: ${{ vars.WATCH_DOWS }}
           WATCH_START_HOUR: ${{ vars.WATCH_START_HOUR }}
           WATCH_END_HOUR: ${{ vars.WATCH_END_HOUR }}
-        run: python monitor.py
+        run: |
+          # 只有「排程」執行才隨機延遲 0～8 分鐘，讓實際查詢時間點不規律；
+          # 手動觸發（測試用）不延遲，馬上跑。
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            sleep $((RANDOM % 480))
+          fi
+          python monitor.py
 
       - name: 保存狀態
         if: always()
