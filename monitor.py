@@ -65,7 +65,11 @@ def scrape():
         page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
         page.fill("#ContentPlaceHolder1_loginid", ACCOUNT)
         page.fill("#loginpw", PASSWORD)
-        page.click("#login_but")
+        # 登入鈕是背景圖按鈕，headless 下常被判定為不可見；直接觸發它的 onclick
+        page.eval_on_selector(
+            "#login_but",
+            "el => (typeof DoSubmit === 'function' ? DoSubmit() : el.click())",
+        )
         page.wait_for_load_state("networkidle", timeout=60000)
 
         # --- 確認登入成功 ---
