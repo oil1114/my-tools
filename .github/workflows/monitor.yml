@@ -41,7 +41,7 @@ jobs:
           python -m playwright install --with-deps chromium
 
       - name: 節奏控制（把每棒拉長到約 6 分鐘一次）
-        run: sleep 150
+        run: sleep 300
 
       - name: 執行監控
         env:
