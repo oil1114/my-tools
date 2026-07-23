@@ -32,7 +32,8 @@ jobs:
         env:
           FE_ACCOUNT: ${{ secrets.FE_ACCOUNT }}
           FE_PASSWORD: ${{ secrets.FE_PASSWORD }}
-          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           # 以下為選填（在 Settings > Variables 設定，可留空）
           WATCH_DOWS: ${{ vars.WATCH_DOWS }}
           WATCH_START_HOUR: ${{ vars.WATCH_START_HOUR }}

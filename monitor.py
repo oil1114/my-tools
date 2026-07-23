@@ -5,7 +5,7 @@
 每次執行會：
   1. 用你的帳號登入線上訂場系統
   2. 掃描滾動開放的日期，找出「可預約」的場地
-  3. 跟上一次的結果比對，只有在「新出現」可預約場地時，才透過 ntfy 推播到你手機
+  3. 跟上一次的結果比對，只有在「新出現」可預約場地時，才透過 Telegram 推播到你手機
 狀態存在 state.json，由 GitHub Actions 幫忙保存。
 """
 import os
@@ -13,6 +13,7 @@ import re
 import sys
 import json
 import datetime
+import urllib.parse
 import urllib.request
 
 BASE = "https://fe.xuanen.com.tw"
@@ -29,8 +30,8 @@ def slot_url(d):
 # ---- 設定（從環境變數讀，GitHub Secrets / Variables 提供）----
 ACCOUNT = os.environ.get("FE_ACCOUNT", "")
 PASSWORD = os.environ.get("FE_PASSWORD", "")
-NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "")
-NTFY_SERVER = os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
+TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "")
+TG_CHAT_ID = os.environ.get("TG_CHAT_ID", "")
 
 # 只想盯特定星期？填數字，用逗號分隔（週一=1 ... 週日=7），留空=全部
 # 例如只要週六日： WATCH_DOWS = "6,7"
@@ -41,8 +42,8 @@ WATCH_END_HOUR = int(os.environ.get("WATCH_END_HOUR", "24"))
 
 STATE_FILE = "state.json"
 
-if not (ACCOUNT and PASSWORD and NTFY_TOPIC):
-    sys.exit("缺少設定：請確認 FE_ACCOUNT / FE_PASSWORD / NTFY_TOPIC 都已設定。")
+if not (ACCOUNT and PASSWORD and TG_BOT_TOKEN and TG_CHAT_ID):
+    sys.exit("缺少設定：請確認 FE_ACCOUNT / FE_PASSWORD / TG_BOT_TOKEN / TG_CHAT_ID 都已設定。")
 
 
 def target_dates():
@@ -133,13 +134,12 @@ def save_state(keys):
 
 
 def push(msg):
-    data = msg.encode("utf-8")
-    req = urllib.request.Request(f"{NTFY_SERVER}/{NTFY_TOPIC}", data=data)
-    # HTTP header 只能放 ASCII，中文一律放在 body
-    req.add_header("Title", "Court Alert")
-    req.add_header("Priority", "high")
-    req.add_header("Tags", "bell")
-    req.add_header("Click", "https://fe.xuanen.com.tw/fe02.aspx")
+    # 透過 Telegram Bot 送訊息，只會進到你自己的聊天室
+    data = urllib.parse.urlencode(
+        {"chat_id": TG_CHAT_ID, "text": msg, "disable_web_page_preview": "true"}
+    ).encode("utf-8")
+    url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
+    req = urllib.request.Request(url, data=data)
     with urllib.request.urlopen(req, timeout=30) as r:
         r.read()
 
@@ -164,7 +164,7 @@ def format_message(new_slots):
         else:
             for i in sorted(items, key=lambda x: (x["time"], x["court"])):
                 lines.append(f"{head} {i['time']} {i['court']}")
-    return "有新場地釋出！\n" + "\n".join(lines)
+    return "有新場地釋出！\n" + "\n".join(lines) + "\n\n訂場：https://fe.xuanen.com.tw/fe02.aspx"
 
 
 def main():
