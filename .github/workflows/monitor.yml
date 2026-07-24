@@ -1,19 +1,14 @@
 name: Monitor
 
-# 「自我接力」觸發：每一棒執行時，一開始就用 DISPATCH_TOKEN 排下一棒，
-# 靠 concurrency 排隊，等這一棒跑完才會開始下一棒。完全不靠 GitHub 內建排程
-# （它對新 repo 常常不穩、不會自己跑）。
-# 每天要做什麼（安靜時段 / 重設基準 / 正常監控）由 monitor.py 依台灣時間判斷。
 on:
   workflow_dispatch:
     inputs:
       reset_baseline:
-        description: "重設基準（只重建、不通知）"
         type: boolean
         default: false
 
 permissions:
-  contents: write          # 讓工作流程可以把 state.json 存回 repo
+  contents: write
 
 concurrency:
   group: monitor
@@ -23,14 +18,11 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      # 一定要抓「最新」的 main（含最新 state.json 基準），而不是派工當下被釘住的舊版，
-      # 否則排隊 6 分鐘後才跑的這棒會拿到過期基準 → 重複通知同一個場地。
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
 
-      # 一開始就排下一棒；放最前面，就算後面步驟失敗，接力也不會斷。
-      - name: 排下一棒
+      - name: chain
         env:
           GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
         run: gh workflow run monitor.yml -R ${{ github.repository }} || true
@@ -39,28 +31,29 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: 安裝 Playwright 瀏覽器
+      - name: deps
         run: |
           pip install playwright
           python -m playwright install --with-deps chromium
 
-      - name: 節奏控制（把每棒拉長到約 6 分鐘一次）
+      - name: pace
         run: sleep 300
 
-      - name: 執行監控
+      - name: run
         env:
-          TZ: Asia/Taipei          # 讓程式的日期/時段計算用台灣時間
+          TZ: Asia/Taipei
           FE_ACCOUNT: ${{ secrets.FE_ACCOUNT }}
           FE_PASSWORD: ${{ secrets.FE_PASSWORD }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          HASH_SALT: ${{ secrets.HASH_SALT }}
           RESET_BASELINE: ${{ github.event.inputs.reset_baseline == 'true' && '1' || '' }}
           WATCH_DOWS: ${{ vars.WATCH_DOWS }}
           WATCH_START_HOUR: ${{ vars.WATCH_START_HOUR }}
           WATCH_END_HOUR: ${{ vars.WATCH_END_HOUR }}
         run: python monitor.py
 
-      - name: 保存狀態
+      - name: save
         if: always()
         run: |
           if [ -n "$(git status --porcelain state.json reset_date.txt alert_date.txt)" ]; then
