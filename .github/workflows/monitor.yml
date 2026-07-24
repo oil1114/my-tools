@@ -36,8 +36,9 @@ jobs:
 
       - name: deps
         run: |
-          pip install playwright
+          pip install playwright pillow
           python -m playwright install --with-deps chromium
+          sudo apt-get install -y -qq fonts-noto-cjk || true
 
       - name: pace
         run: sleep 300

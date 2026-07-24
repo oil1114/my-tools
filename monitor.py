@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import io
 import os
 import re
 import sys
@@ -294,6 +295,183 @@ def poll_commands():
     return asked
 
 
+def in_report_window(o):
+    try:
+        y, m, d = (int(x) for x in o["date"].split("-"))
+        day = datetime.date(y, m, d)
+    except ValueError:
+        return None
+    today = tw_now().date()
+    return day if today <= day <= today + datetime.timedelta(days=8) else None
+
+
+def render_orders_png(orders):
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        return None
+    font_sets = [
+        ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+         "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
+        ("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc", None),
+        (r"C:\Windows\Fonts\msjh.ttc", r"C:\Windows\Fonts\msjhbd.ttc"),
+    ]
+    reg = bold = None
+    for r_, b_ in font_sets:
+        if os.path.exists(r_):
+            reg = r_
+            bold = b_ if b_ and os.path.exists(b_) else r_
+            break
+    if not reg:
+        return None
+    try:
+        S = 2
+        SURFACE, GRID, AXIS = "#fcfcfb", "#e1e0d9", "#c3c2b7"
+        INK, INK2, MUTED = "#0b0b0b", "#52514e", "#898781"
+        GOOD, GOOD_TEXT, GOOD_TINT = "#0ca30c", "#006300", "#d1ecd0"
+        CANCEL_TINT, TODAY_WASH, TODAY_INK = "#f0efec", "#f3f7fc", "#2a78d6"
+
+        today = tw_now().date()
+        slots = {}
+        for o in orders:
+            day = in_report_window(o)
+            digits = re.sub(r"\D", "", o["hour"] or "")
+            if day is None or not digits:
+                continue
+            slots.setdefault((day, int(digits)), []).append(o)
+
+        last = max([today + datetime.timedelta(days=7)] + [d for d, _ in slots])
+        days = [today + datetime.timedelta(days=i) for i in range((last - today).days + 1)]
+        hour_lo = max(0, min([18] + [h for _, h in slots]))
+        hour_hi = min(24, max([22] + [h + 1 for _, h in slots]))
+        n_rows = hour_hi - hour_lo
+
+        def f(size, b=False):
+            return ImageFont.truetype(bold if b else reg, size * S)
+
+        def short_court(name):
+            m = re.match(r"(\d+F).*?([A-Za-z]?\d+)$", name)
+            return f"{m.group(1)} {m.group(2)}" if m else name
+
+        M, W_g, W_c, H_t, H_h, H_r, H_l = 28, 56, 122, 64, 58, 64, 56
+        W = M + W_g + len(days) * W_c + M
+        H = M + H_t + H_h + n_rows * H_r + H_l + M
+        img = Image.new("RGB", (W * S, H * S), SURFACE)
+        dr = ImageDraw.Draw(img)
+
+        def rect(x0, y0, x1, y1, **kw):
+            dr.rectangle([x0 * S, y0 * S, x1 * S, y1 * S], **kw)
+
+        def line(x0, y0, x1, y1, fill, w=1):
+            dr.line([x0 * S, y0 * S, x1 * S, y1 * S], fill=fill, width=w * S // 2 or 1)
+
+        def text(x, y, s, font, fill, anchor="la"):
+            dr.text((x * S, y * S), s, font=font, fill=fill, anchor=anchor)
+
+        gx, gy = M + W_g, M + H_t + H_h
+        text(M, M + 2, "未來 8 天訂單", f(26, True), INK)
+        now = tw_now()
+        rng = f"{days[0].month}/{days[0].day} – {days[-1].month}/{days[-1].day}"
+        text(W - M, M + 14, f"{rng}　產生於 {now.month}/{now.day} {now:%H:%M}", f(13), MUTED, anchor="ra")
+
+        if today in days:
+            ti = days.index(today)
+            rect(gx + ti * W_c, M + H_t, gx + (ti + 1) * W_c, gy + n_rows * H_r, fill=TODAY_WASH)
+
+        for i, day in enumerate(days):
+            cx = gx + i * W_c + W_c // 2
+            is_today = day == today
+            text(cx, M + H_t + 8, f"{day.month}/{day.day}", f(16, is_today), INK if is_today else INK2, anchor="ma")
+            sub = "今天" if is_today else f"週{DOW_CH[day.weekday()]}"
+            text(cx, M + H_t + 32, sub, f(12, is_today), TODAY_INK if is_today else MUTED, anchor="ma")
+
+        for r in range(n_rows + 1):
+            y = gy + r * H_r
+            text(gx - 8, y - 7 if r else y, f"{hour_lo + r:02d}", f(11), MUTED, anchor="ra")
+
+        for (day, hour), items in slots.items():
+            if day not in days or not (hour_lo <= hour < hour_hi):
+                continue
+            i, r = days.index(day), hour - hour_lo
+            x0, y0 = gx + i * W_c, gy + r * H_r
+            x1, y1 = x0 + W_c, y0 + H_r
+            paid = [o for o in items if o["status"] == "繳費"]
+            show = paid or items
+            cancelled = not paid
+            rect(x0 + 1, y0 + 1, x1 - 1, y1 - 1, fill=CANCEL_TINT if cancelled else GOOD_TINT)
+            if not cancelled:
+                rect(x0 + 1, y0 + 1, x0 + 4, y1 - 1, fill=GOOD)
+            label = "·".join(sorted({short_court(o["court"]) for o in show}))
+            cx, cy = x0 + W_c // 2 + 6, y0 + H_r // 2
+            font = f(14, not cancelled)
+            text(cx, cy, label, font, MUTED if cancelled else GOOD_TEXT, anchor="mm")
+            bb = dr.textbbox((cx * S, cy * S), label, font=font, anchor="mm")
+            mx = (bb[0] // S) - 14
+            if cancelled:
+                line(mx, cy - 4, mx + 8, cy + 4, MUTED, 3)
+                line(mx + 8, cy - 4, mx, cy + 4, MUTED, 3)
+                dr.line([bb[0] - 2 * S, cy * S, bb[2] + 2 * S, cy * S], fill=MUTED, width=max(S, 2))
+            else:
+                line(mx, cy, mx + 3, cy + 4, GOOD, 3)
+                line(mx + 3, cy + 4, mx + 9, cy - 4, GOOD, 3)
+
+        for r in range(n_rows + 1):
+            y = gy + r * H_r
+            line(gx, y, gx + len(days) * W_c, y, GRID)
+        for i in range(len(days) + 1):
+            x = gx + i * W_c
+            line(x, gy, x, gy + n_rows * H_r, GRID)
+        line(gx, M + H_t, gx + len(days) * W_c, M + H_t, AXIS)
+        bot_y = gy + n_rows * H_r
+        dr.rectangle([gx * S, (M + H_t) * S, (gx + len(days) * W_c) * S, bot_y * S], outline=AXIS, width=S)
+
+        ly = bot_y + 18
+        rect(gx, ly, gx + 26, ly + 16, fill=GOOD_TINT)
+        rect(gx, ly, gx + 3, ly + 16, fill=GOOD)
+        text(gx + 34, ly + 1, "已繳費", f(13), INK2)
+        lx2 = gx + 130
+        rect(lx2, ly, lx2 + 26, ly + 16, fill=CANCEL_TINT, outline=GRID, width=S)
+        text(lx2 + 34, ly + 1, "已取消", f(13), INK2)
+
+        img = img.resize((int(W * 1.2), int(H * 1.2)), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, "PNG")
+        return buf.getvalue()
+    except Exception as e:
+        print(f"render failed: {e!r}")
+        return None
+
+
+def push_photo(png, caption, chat_ids=None):
+    if chat_ids is None:
+        chat_ids = all_chat_ids()
+    boundary = "----tg" + hashlib.sha256(os.urandom(8)).hexdigest()[:16]
+    url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendPhoto"
+    ok = True
+    for chat_id in chat_ids:
+        parts = []
+        for k, v in (("chat_id", chat_id), ("caption", caption), ("parse_mode", "HTML")):
+            parts.append(
+                f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode("utf-8")
+            )
+        parts.append(
+            (f'--{boundary}\r\nContent-Disposition: form-data; name="photo"; '
+             'filename="orders.png"\r\nContent-Type: image/png\r\n\r\n').encode("utf-8")
+        )
+        body = b"".join(parts) + png + f"\r\n--{boundary}--\r\n".encode("utf-8")
+        req = urllib.request.Request(
+            url, data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                r.read()
+        except Exception as e:
+            print(f"photo push to {chat_id} failed: {e}")
+            ok = False
+    return ok
+
+
 STATUS_MARK = {"繳費": "✅ 已繳費", "取消": "❌ 已取消", "退費": "↩️ 已退費"}
 
 
@@ -391,7 +569,10 @@ def main():
         return
 
     if ask_chats:
-        push(format_orders(orders), ask_chats)
+        msg = format_orders(orders)
+        png = render_orders_png(orders)
+        if not (png and push_photo(png, msg, ask_chats)):
+            push(msg, ask_chats)
 
     cur = {key(s): s for s in avail}
     hcur = {hkey(k): s for k, s in cur.items()}
