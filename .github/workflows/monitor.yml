@@ -6,6 +6,9 @@ on:
       reset_baseline:
         type: boolean
         default: false
+      orders_report:
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -48,6 +51,7 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           HASH_SALT: ${{ secrets.HASH_SALT }}
           RESET_BASELINE: ${{ github.event.inputs.reset_baseline == 'true' && '1' || '' }}
+          ORDERS_REPORT: ${{ github.event.inputs.orders_report == 'true' && '1' || '' }}
           WATCH_DOWS: ${{ vars.WATCH_DOWS }}
           WATCH_START_HOUR: ${{ vars.WATCH_START_HOUR }}
           WATCH_END_HOUR: ${{ vars.WATCH_END_HOUR }}
@@ -56,10 +60,10 @@ jobs:
       - name: save
         if: always()
         run: |
-          if [ -n "$(git status --porcelain state.json reset_date.txt alert_date.txt)" ]; then
+          if [ -n "$(git status --porcelain state.json reset_date.txt alert_date.txt tg_offset.txt)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            for f in state.json reset_date.txt alert_date.txt; do
+            for f in state.json reset_date.txt alert_date.txt tg_offset.txt; do
               [ -f "$f" ] && git add "$f"
             done
             git commit -m "update state [skip ci]"

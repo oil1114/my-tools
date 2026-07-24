@@ -3,6 +3,7 @@ import os
 import re
 import sys
 import json
+import time
 import hmac
 import html
 import hashlib
@@ -14,6 +15,7 @@ BASE = "https://fe.xuanen.com.tw"
 PT = "1"
 LOGIN_URL = f"{BASE}/fe02.aspx?module=login_page&files=login"
 CAL_URL = f"{BASE}/fe02.aspx?module=net_booking&files=booking_place&PT={PT}"
+ORDERS_URL = f"{BASE}/fe02.aspx?Module=member&files=orderx_mt"
 
 SESSION_HOURS = {1: (6, 12), 2: (12, 18), 3: (18, 22)}
 SESSION_NAME = {1: "上午", 2: "下午", 3: "晚上"}
@@ -41,6 +43,7 @@ PASSWORD = os.environ.get("FE_PASSWORD", "")
 TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "")
 TG_CHAT_ID = os.environ.get("TG_CHAT_ID", "")
 RESET_BASELINE = bool(os.environ.get("RESET_BASELINE", "").strip())
+ORDERS_REPORT = bool(os.environ.get("ORDERS_REPORT", "").strip())
 HASH_SALT = os.environ.get("HASH_SALT", "").encode("utf-8")
 
 WATCH_DOWS = os.environ.get("WATCH_DOWS", "").strip()
@@ -50,6 +53,7 @@ WATCH_END_HOUR = int(os.environ.get("WATCH_END_HOUR") or "24")
 STATE_FILE = "state.json"
 RESET_FILE = "reset_date.txt"
 ALERT_FILE = "alert_date.txt"
+OFFSET_FILE = "tg_offset.txt"
 
 
 class LoginError(Exception):
@@ -87,10 +91,11 @@ def goto(page, url, tries=3):
             page.wait_for_timeout(4000)
 
 
-def scrape():
+def scrape(include_orders=False):
     from playwright.sync_api import sync_playwright
 
     available = []
+    orders = []
     with sync_playwright() as p:
         browser = p.chromium.launch()
         ua = (
@@ -113,6 +118,22 @@ def scrape():
         if 'id="loginpw"' in content or 'name="loginpw"' in content:
             browser.close()
             raise LoginError("login failed")
+
+        if include_orders:
+            goto(page, ORDERS_URL)
+            rows = page.eval_on_selector_all(
+                "table tr",
+                "els => els.map(tr => Array.from(tr.cells)"
+                ".map(td => td.innerText.trim().replace(/\\s+/g, ' ')))"
+                ".filter(r => r.length >= 9 && /^\\d{4}\\/\\d{2}\\/\\d{2}$/.test(r[0]))",
+            )
+            for r in rows:
+                if re.match(r"^\d{4}-\d{2}-\d{2}$", r[5] or ""):
+                    orders.append(
+                        {"date": r[5], "hour": r[6], "court": r[3], "status": r[7]}
+                    )
+            page.wait_for_timeout(500)
+            goto(page, CAL_URL)
 
         open_dates = page.eval_on_selector_all(
             'img[src*="NewDataSelect"]',
@@ -138,7 +159,7 @@ def scrape():
                 page.wait_for_timeout(500)
 
         browser.close()
-    return available
+    return available, orders
 
 
 def in_window(slot):
@@ -202,8 +223,13 @@ def mark_alerted(today):
         f.write(today)
 
 
-def push(msg):
-    chat_ids = [c.strip() for c in TG_CHAT_ID.split(",") if c.strip()]
+def all_chat_ids():
+    return [c.strip() for c in TG_CHAT_ID.split(",") if c.strip()]
+
+
+def push(msg, chat_ids=None):
+    if chat_ids is None:
+        chat_ids = all_chat_ids()
     url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
     for chat_id in chat_ids:
         data = urllib.parse.urlencode(
@@ -220,6 +246,86 @@ def push(msg):
                 r.read()
         except Exception as e:
             print(f"push to {chat_id} failed: {e}")
+
+
+def load_offset():
+    try:
+        with open(OFFSET_FILE, encoding="utf-8") as f:
+            return int(f.read().strip() or "0")
+    except (FileNotFoundError, ValueError):
+        return None
+
+
+def save_offset(v):
+    with open(OFFSET_FILE, "w", encoding="utf-8") as f:
+        f.write(str(v))
+
+
+def poll_commands():
+    # consume pending bot messages; return chat ids that asked for the order list
+    offset = load_offset()
+    params = {"timeout": "0", "allowed_updates": '["message"]'}
+    if offset:
+        params["offset"] = str(offset)
+    url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/getUpdates?" + urllib.parse.urlencode(params)
+    try:
+        with urllib.request.urlopen(url, timeout=30) as r:
+            updates = json.load(r).get("result", [])
+    except Exception as e:
+        print(f"getUpdates failed: {e}")
+        return set()
+    if not updates:
+        return set()
+    save_offset(max(u["update_id"] for u in updates) + 1)
+    allowed = set(all_chat_ids())
+    fresh_after = time.time() - 45 * 60
+    asked = set()
+    for u in updates:
+        m = u.get("message") or {}
+        chat = str((m.get("chat") or {}).get("id", ""))
+        text = (m.get("text") or "").strip().lower()
+        if chat not in allowed:
+            continue
+        # no stored offset yet: skip stale backlog so old messages don't fire
+        if offset is None and m.get("date", 0) < fresh_after:
+            continue
+        if text.startswith("/order") or text == "訂單":
+            asked.add(chat)
+    return asked
+
+
+STATUS_MARK = {"繳費": "✅ 已繳費", "取消": "❌ 已取消", "退費": "↩️ 已退費"}
+
+
+def format_orders(orders):
+    today = tw_now().date()
+    end = today + datetime.timedelta(days=8)
+    rows = []
+    for o in orders:
+        try:
+            y, m, d = (int(x) for x in o["date"].split("-"))
+            day = datetime.date(y, m, d)
+        except ValueError:
+            continue
+        if today <= day <= end:
+            rows.append((day, o))
+    head = f"📋 未來 8 天訂單（{today.month}/{today.day}～{end.month}/{end.day}）"
+    if not rows:
+        return head + "\n目前沒有任何訂單。"
+
+    def hour_val(o):
+        digits = re.sub(r"\D", "", o["hour"] or "")
+        return int(digits) if digits else 0
+
+    lines = [head]
+    for day, o in sorted(rows, key=lambda x: (x[0], hour_val(x[1]))):
+        h = hour_val(o)
+        t = f"{h:02d}:00~{h + 1:02d}:00" if h else o["hour"]
+        mark = STATUS_MARK.get(o["status"], o["status"])
+        lines.append(
+            html.escape(f"{day.month}/{day.day}(週{DOW_CH[day.weekday()]}) {t} {o['court']} {mark}")
+        )
+    return "\n".join(lines)
 
 
 DOW_CH = "一二三四五六日"
@@ -260,10 +366,17 @@ def main():
     daily_reset = last_reset_date() != today
     reset = RESET_BASELINE or daily_reset
 
+    ask_chats = poll_commands()
+    if ORDERS_REPORT:
+        ask_chats = set(all_chat_ids())
+
     try:
-        avail = [s for s in scrape() if in_window(s)]
+        avail, orders = scrape(include_orders=bool(ask_chats))
+        avail = [s for s in avail if in_window(s)]
     except LoginError as e:
         print("login failed: " + str(e))
+        if ask_chats:
+            push("⚠️ 登入失敗，暫時無法查詢訂單。", ask_chats)
         if not alerted_today(today):
             mark_alerted(today)
             try:
@@ -273,7 +386,12 @@ def main():
         return
     except Exception as e:
         print(f"check failed (likely timeout/rate-limit), skip: {e!r}")
+        if ask_chats:
+            push("⚠️ 訂單查詢失敗（網站暫時連不上），請稍後再傳一次 /orders。", ask_chats)
         return
+
+    if ask_chats:
+        push(format_orders(orders), ask_chats)
 
     cur = {key(s): s for s in avail}
     hcur = {hkey(k): s for k, s in cur.items()}
