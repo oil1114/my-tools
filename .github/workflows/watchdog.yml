@@ -1,0 +1,85 @@
+name: Watchdog
+
+on:
+  schedule:
+    - cron: "13,43 * * * *"
+  workflow_dispatch:
+    inputs:
+      test_alert:
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: watchdog
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TEST_ALERT: ${{ github.event.inputs.test_alert == 'true' && '1' || '' }}
+          STALL_MIN: "90"
+          REMIND_MIN: "360"
+        run: |
+          set -e
+          send() {
+            code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+              "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+              -d chat_id="${TG_CHAT_ID}" --data-urlencode text="$1")
+            echo "telegram: $code"
+          }
+          save() {
+            echo "$1" > watchdog_alert.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add watchdog_alert.txt
+            git commit -m "update state [skip ci]"
+            git pull --rebase --autostash origin main || true
+            git push || true
+          }
+
+          if [ -n "$TEST_ALERT" ]; then
+            send "🧪 watchdog 測試:警報通道正常"
+            exit 0
+          fi
+
+          last=$(gh run list -R "$GITHUB_REPOSITORY" -w monitor.yml --status success --limit 1 --json updatedAt -q '.[0].updatedAt' || echo "")
+          now=$(date +%s)
+          last_ts=0
+          [ -n "$last" ] && last_ts=$(date -d "$last" +%s)
+          age_min=$(( (now - last_ts) / 60 ))
+          echo "last success: ${last:-none} (${age_min} min ago)"
+          prev=$(cat watchdog_alert.txt 2>/dev/null || echo 0)
+
+          if [ "$age_min" -lt "$STALL_MIN" ]; then
+            if [ "$prev" != "0" ]; then
+              send "✅ 監控已恢復正常執行"
+              save 0
+            fi
+            exit 0
+          fi
+
+          since_alert=$(( (now - prev) / 60 ))
+          if [ "$since_alert" -lt "$REMIND_MIN" ]; then
+            echo "already alerted ${since_alert} min ago, skip"
+            exit 0
+          fi
+          if [ "$last_ts" -gt 0 ]; then
+            last_local=$(TZ=Asia/Taipei date -d "$last" "+%m/%d %H:%M")
+            send "⚠️ 監控已停擺:最後一次成功執行是 ${last_local}(約 ${age_min} 分鐘前)。請到 GitHub Actions 檢查。"
+          else
+            send "⚠️ 監控已停擺:近期查無成功執行紀錄。請到 GitHub Actions 檢查。"
+          fi
+          save "$now"
