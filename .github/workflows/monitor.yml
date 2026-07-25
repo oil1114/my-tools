@@ -33,7 +33,15 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
-          if ! gh workflow run monitor.yml -R ${{ github.repository }}; then
+          ok=""
+          for i in 1 2 3; do
+            if gh workflow run monitor.yml -R ${{ github.repository }}; then
+              ok=1; break
+            fi
+            echo "dispatch attempt $i failed, retrying..."
+            sleep 25
+          done
+          if [ -z "$ok" ]; then
             today=$(TZ=Asia/Taipei date +%F)
             if [ "$(cat dispatch_alert.txt 2>/dev/null)" != "$today" ]; then
               curl -s -o /dev/null -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \

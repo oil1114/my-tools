@@ -56,11 +56,15 @@ jobs:
             git push || true
           }
           restart() {
-            if gh workflow run monitor.yml -R "$GITHUB_REPOSITORY"; then
-              echo "restart dispatched"
-            else
-              echo "restart dispatch FAILED"
-            fi
+            for i in 1 2 3; do
+              if gh workflow run monitor.yml -R "$GITHUB_REPOSITORY"; then
+                echo "restart dispatched"
+                return 0
+              fi
+              echo "restart attempt $i failed, retrying..."
+              sleep 20
+            done
+            echo "restart dispatch FAILED"
           }
 
           if [ -n "$TEST_ALERT" ]; then
