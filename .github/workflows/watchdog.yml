@@ -8,10 +8,13 @@ on:
       test_alert:
         type: boolean
         default: false
+      test_restart:
+        type: boolean
+        default: false
 
 permissions:
   contents: write
-  actions: read
+  actions: write
 
 concurrency:
   group: watchdog
@@ -27,9 +30,12 @@ jobs:
       - name: check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           TEST_ALERT: ${{ github.event.inputs.test_alert == 'true' && '1' || '' }}
+          TEST_RESTART: ${{ github.event.inputs.test_restart == 'true' && '1' || '' }}
+          RESTART_MIN: "45"
           STALL_MIN: "90"
           REMIND_MIN: "360"
         run: |
@@ -49,10 +55,34 @@ jobs:
             git pull --rebase --autostash origin main || true
             git push || true
           }
+          restart() {
+            if gh workflow run monitor.yml -R "$GITHUB_REPOSITORY"; then
+              echo "restart dispatched"
+            else
+              echo "restart dispatch FAILED"
+            fi
+          }
 
           if [ -n "$TEST_ALERT" ]; then
-            send "🧪 watchdog 測試:警報通道正常"
+            send "🧪 watchdog 測試：警報通道正常"
             exit 0
+          fi
+          if [ -n "$TEST_RESTART" ]; then
+            restart
+            exit 0
+          fi
+
+          # 每天台灣時間 09:13 那輪：檢查 DISPATCH_TOKEN 是否快過期
+          if [ "$(TZ=Asia/Taipei date +%H)" = "09" ] && [ "$(date +%M)" -lt 30 ] && [ -n "$DISPATCH_TOKEN" ]; then
+            exp=$(curl -sI -H "Authorization: Bearer $DISPATCH_TOKEN" https://api.github.com/user \
+              | tr -d '\r' | grep -i '^github-authentication-token-expiration:' | cut -d' ' -f2- || true)
+            if [ -n "$exp" ]; then
+              exp_ts=$(date -d "$exp" +%s 2>/dev/null || echo 0)
+              days=$(( (exp_ts - $(date +%s)) / 86400 ))
+              if [ "$exp_ts" -gt 0 ] && [ "$days" -le 7 ]; then
+                send "🔔 DISPATCH_TOKEN 將在約 ${days} 天後過期，請到 GitHub 產生新 token 並更新 repo secret，否則排程會退化成每 30 分鐘一輪。"
+              fi
+            fi
           fi
 
           last=$(gh run list -R "$GITHUB_REPOSITORY" -w monitor.yml --status success --limit 1 --json updatedAt -q '.[0].updatedAt' || echo "")
@@ -62,6 +92,10 @@ jobs:
           age_min=$(( (now - last_ts) / 60 ))
           echo "last success: ${last:-none} (${age_min} min ago)"
           prev=$(cat watchdog_alert.txt 2>/dev/null || echo 0)
+
+          if [ "$age_min" -ge "$RESTART_MIN" ]; then
+            restart
+          fi
 
           if [ "$age_min" -lt "$STALL_MIN" ]; then
             if [ "$prev" != "0" ]; then
@@ -78,8 +112,8 @@ jobs:
           fi
           if [ "$last_ts" -gt 0 ]; then
             last_local=$(TZ=Asia/Taipei date -d "$last" "+%m/%d %H:%M")
-            send "⚠️ 監控已停擺:最後一次成功執行是 ${last_local}(約 ${age_min} 分鐘前)。請到 GitHub Actions 檢查。"
+            send "⚠️ 監控已停擺：最後一次成功執行是 ${last_local}（約 ${age_min} 分鐘前）。已自動嘗試重啟；若持續收到此訊息表示自動修復無效，需要人工處理。"
           else
-            send "⚠️ 監控已停擺:近期查無成功執行紀錄。請到 GitHub Actions 檢查。"
+            send "⚠️ 監控已停擺：近期查無成功執行紀錄。已自動嘗試重啟；若持續收到此訊息表示自動修復無效，需要人工處理。"
           fi
           save "$now"
