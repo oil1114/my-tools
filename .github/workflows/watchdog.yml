@@ -98,6 +98,15 @@ jobs:
           prev=$(cat watchdog_alert.txt 2>/dev/null || echo 0)
 
           if [ "$age_min" -ge "$RESTART_MIN" ]; then
+            # 先砍掉懸掛超過 RESTART_MIN 的 run，釋放 concurrency group——
+            # 否則新派發的 run 只會在佇列裡等待、然後被更新的 run 取消，重啟等於無效
+            stuck=$(gh run list -R "$GITHUB_REPOSITORY" -w monitor.yml --status in_progress \
+              --limit 10 --json databaseId,startedAt \
+              -q '.[] | select((now - (.startedAt | fromdate)) / 60 > '"$RESTART_MIN"') | .databaseId' || true)
+            for id in $stuck; do
+              echo "cancelling stuck run $id"
+              gh run cancel "$id" -R "$GITHUB_REPOSITORY" || true
+            done
             restart
           fi
 

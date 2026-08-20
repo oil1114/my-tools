@@ -22,6 +22,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,10 +57,21 @@ jobs:
           python-version: "3.12"
 
       - name: deps
+        timeout-minutes: 15
         run: |
           pip install playwright pillow
-          python -m playwright install --with-deps chromium
-          sudo apt-get install -y -qq fonts-noto-cjk || true
+          # apt 鏡像可能整個懸掛（2026-08-19 曾連續卡死 6 小時），所有會碰 apt 的指令都要包 timeout
+          if ! timeout 240 python -m playwright install --with-deps chromium; then
+            echo "with-deps failed or hung, falling back to browser-only install"
+            ok=""
+            for i in 1 2 3; do
+              if timeout 120 python -m playwright install chromium; then ok=1; break; fi
+              echo "install attempt $i failed, retrying..."
+              sleep 10
+            done
+            [ -n "$ok" ]
+          fi
+          timeout 120 sudo apt-get install -y -qq fonts-noto-cjk || true
 
       - name: pace
         run: sleep 300
